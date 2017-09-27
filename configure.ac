@@ -12,7 +12,7 @@ AC_PROG_CC
 AC_PROG_CXX
 
 # Checks for libraries.
-AC_CHECK_LIB([crypto], [HMAC_CTX_init], [], [AC_MSG_ERROR([OpenSSL libraries required])])
+AC_CHECK_LIB([crypto], [HMAC_CTX_reset], [], [AC_MSG_ERROR([OpenSSL libraries required])])
 
 # Checks for header files.
 AC_CHECK_HEADERS([inttypes.h netinet/in.h stdint.h string.h], [],
