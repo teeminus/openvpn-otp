@@ -56,29 +56,13 @@ typedef struct otp_params {
     const char *udid;
 } otp_params_t;
 
-#define LOG(format, ...) logmessage(format, ## __VA_ARGS__)
+struct plugin {
+    plugin_log_t log;
+};
 
-#define DEBUG(format, ...) logdebug(format, ## __VA_ARGS__)
+#define LOG(format, ...) plugin->log(PLOG_NOTE,  "OTP-AUTH", format, ## __VA_ARGS__)
 
-static void logmessage(const char *format, ...)
-{
-    va_list va;
-
-    va_start(va, format);
-    vfprintf(stderr, format, va);
-    va_end(va);
-}
-
-static void logdebug(const char *format, ...)
-{
-    if (debug > 0) {
-        va_list va;
-
-        va_start(va, format);
-        vfprintf(stderr, format, va);
-        va_end(va);
-    }
-}
+#define DEBUG(format, ...) if (debug > 0) plugin->log(PLOG_NOTE, "OTP-AUTH-DEBUG", format, ## __VA_ARGS__)
 
 #ifndef htobe64
 
@@ -257,7 +241,7 @@ split_secret(char *secret, otp_params_t *otp_params)
 }
 
 static int
-hotp_read_counter(const void * otp_key)
+hotp_read_counter(const void * otp_key, struct plugin *plugin)
 {
     /* Compute SHA1 for the otp_key */
     unsigned char hash[SHA_DIGEST_LENGTH];
@@ -274,23 +258,23 @@ hotp_read_counter(const void * otp_key)
     }
     snprintf(path, sizeof(path), "%s%s", hotp_counters, hexdigest);
     /* Find matching SHA1*/
-    DEBUG("OTP-AUTH: opening HOTP counter file '%s'\n", path);
+    DEBUG("opening HOTP counter file '%s'", path);
     counter_file = fopen(path, "r");
     if (counter_file != NULL) {
         if (fgets(line, sizeof(line), counter_file)) {
           fclose(counter_file);
           int ret = atoi(line);
-          DEBUG("OTP-AUTH: current HOTP value is %i\n", ret);
+          DEBUG("current HOTP value is %i", ret);
           return atoi(line);
         }
         fclose(counter_file);
     }
-    LOG("OTP-AUTH: failed to read HOTP counter file '%s'\n", path);
+    LOG("failed to read HOTP counter file '%s'", path);
     return -1;
 }
 
 static int
-hotp_set_counter(const void * otp_key, int counter)
+hotp_set_counter(const void * otp_key, int counter, struct plugin *plugin)
 {
     /* Compute SHA1 for the otp_key */
     unsigned char hash[SHA_DIGEST_LENGTH];
@@ -308,25 +292,25 @@ hotp_set_counter(const void * otp_key, int counter)
     snprintf(path, sizeof(path), "%s%s", hotp_counters, hexdigest);
 
     /* Find matching SHA1*/
-    DEBUG("OTP-AUTH: opening HOTP counter file '%s' for writing\n", path);
+    DEBUG("opening HOTP counter file '%s' for writing", path);
     counter_file = fopen(path, "w");
     if (counter_file != NULL) {
-        DEBUG("OTP-AUTH: setting HOTP counter value to %i\n", counter);
+        DEBUG("setting HOTP counter value to %i", counter);
         if (fprintf(counter_file, "%d", counter)) {
           fclose(counter_file);
-          DEBUG("OTP-AUTH: HOTP counter update successful\n", counter);
+          DEBUG("HOTP counter update successful", counter);
           return 0;
         }
         fclose(counter_file);
     }
-    LOG("OTP-AUTH: failed to write HOTP counter file '%s'\n", path);
+    LOG("failed to write HOTP counter file '%s'", path);
     return -1;
 }
 
 /**
  * Verify user name and password
  */
-static int otp_verify(const char *vpn_username, const char *vpn_secret)
+static int otp_verify(const char *vpn_username, const char *vpn_secret, struct plugin *plugin)
 {
     FILE *secrets_file;
     user_entry_t user_entry;
@@ -340,11 +324,11 @@ static int otp_verify(const char *vpn_username, const char *vpn_secret)
 
     secrets_file = fopen(otp_secrets, "r");
     if (NULL == secrets_file) {
-        LOG("OTP-AUTH: failed to open %s\n", otp_secrets);
+        LOG("failed to open %s", otp_secrets);
         return ok;
     }
 
-    DEBUG("OTP-AUTH: trying to authenticate username '%s'\n", vpn_username);
+    DEBUG("trying to authenticate username '%s'", vpn_username);
 
     while (!feof(secrets_file)) {
         if (read_user_entry(secrets_file, &user_entry)) {
@@ -355,7 +339,7 @@ static int otp_verify(const char *vpn_username, const char *vpn_secret)
             continue;
         }
 
-        DEBUG("OTP-AUTH: username '%s' exists in '%s'\n", vpn_username, otp_secrets);
+        DEBUG("username '%s' exists in '%s'", vpn_username, otp_secrets);
 
         /* Handle non-otp passwords before trying to parse out otp fields */
         if (!strncasecmp(user_entry.secret, "plain:", sizeof("plain:") - 1)) {
@@ -373,7 +357,7 @@ static int otp_verify(const char *vpn_username, const char *vpn_secret)
 
         otp_digest = EVP_get_digestbyname(otp_params.hash);
         if (!otp_digest) {
-            LOG("OTP-AUTH: unknown digest '%s'\n", otp_params.hash);
+            LOG("unknown digest '%s'", otp_params.hash);
             goto done;
         }
 
@@ -392,7 +376,7 @@ static int otp_verify(const char *vpn_username, const char *vpn_secret)
             otp_key = otp_params.key;
             key_len = strlen(otp_params.key);
         } else {
-            LOG("OTP-AUTH: unknown encoding '%s'\n", otp_params.encoding);
+            LOG("unknown encoding '%s'", otp_params.encoding);
             goto done;
         }
 
@@ -435,12 +419,12 @@ static int otp_verify(const char *vpn_username, const char *vpn_secret)
 
                 snprintf(secret, sizeof(secret), "%s%0*u", otp_params.pin, tdigits, otp);
 
-                DEBUG("OTP-AUTH: trying method='%s', client_username='%s', client_secret='%s', server_username='%s', server_secret='%s'\n", otp_params.method, vpn_username, vpn_secret, user_entry.name, secret);
+                DEBUG("trying method='%s', client_username='%s', client_secret='%s', server_username='%s', server_secret='%s'", otp_params.method, vpn_username, vpn_secret, user_entry.name, secret);
 
                 if (vpn_username && !strcmp (vpn_username, user_entry.name)
                     && vpn_secret && !strcmp (vpn_secret, secret)) {
                     ok = 1;
-                    DEBUG("OTP-AUTH: auth ok for method='%s', client_username='%s', client_secret='%s'\n", otp_params.method, vpn_username, vpn_secret);
+                    DEBUG("auth ok for method='%s', client_username='%s', client_secret='%s'", otp_params.method, vpn_username, vpn_secret);
                 }
             }
             HMAC_CTX_free (hmac);
@@ -452,7 +436,7 @@ static int otp_verify(const char *vpn_username, const char *vpn_secret)
             int tdigits = totp_digits;
             int i = 0;
 
-            i = hotp_read_counter(otp_params.key);
+            i = hotp_read_counter(otp_params.key, plugin);
 
             if (i >= 0) {
               T = i;
@@ -477,13 +461,13 @@ static int otp_verify(const char *vpn_username, const char *vpn_secret)
 
                   snprintf(secret, sizeof(secret), "%s%0*u", otp_params.pin, tdigits, otp);
 
-                  DEBUG("OTP-AUTH: trying method='%s', client_username='%s', client_secret='%s', server_username='%s', server_secret='%s', hotp=%"PRIu64"\n", otp_params.method, vpn_username, vpn_secret, user_entry.name, secret, Ti);
+                  DEBUG("trying method='%s', client_username='%s', client_secret='%s', server_username='%s', server_secret='%s', hotp=%"PRIu64"", otp_params.method, vpn_username, vpn_secret, user_entry.name, secret, Ti);
 
                   if (vpn_username && !strcmp (vpn_username, user_entry.name)
                       && vpn_secret && !strcmp (vpn_secret, secret)) {
                       ok = 1;
-                      DEBUG("OTP-AUTH: auth ok for method='%s', client_username='%s', client_secret='%s', hotp=%"PRIu64"\n", otp_params.method, vpn_username, vpn_secret, Ti);
-                      hotp_set_counter(otp_params.key, Ti+1);
+                      DEBUG("auth ok for method='%s', client_username='%s', client_secret='%s', hotp=%"PRIu64"", otp_params.method, vpn_username, vpn_secret, Ti);
+                      hotp_set_counter(otp_params.key, Ti+1, plugin);
                   }
               }
             }
@@ -514,18 +498,18 @@ static int otp_verify(const char *vpn_username, const char *vpn_secret)
                 snprintf(secret, sizeof(secret),
                          "%02x%02x%02x", mac[0], mac[1], mac[2]);
 
-                DEBUG("OTP-AUTH: trying method='%s', client_username='%s', client_secret='%s', server_username='%s', server_secret='%s'\n", otp_params.method, vpn_username, vpn_secret, user_entry.name, secret);
+                DEBUG("trying method='%s', client_username='%s', client_secret='%s', server_username='%s', server_secret='%s'", otp_params.method, vpn_username, vpn_secret, user_entry.name, secret);
 
                 if (vpn_username && !strcmp (vpn_username, user_entry.name)
                     && vpn_secret && !strcmp (vpn_secret, secret)) {
                     ok = 1;
-                    DEBUG("OTP-AUTH: auth ok for method='%s', client_username='%s', client_secret='%s'\n", otp_params.method, vpn_username, vpn_secret);
+                    DEBUG("auth ok for method='%s', client_username='%s', client_secret='%s'", otp_params.method, vpn_username, vpn_secret);
                 }
                 EVP_MD_CTX_free (ctx);
             }
         }
         else {
-            LOG("OTP-AUTH: unknown OTP method %s\n", otp_params.method);
+            LOG("unknown OTP method %s", otp_params.method);
         }
 
     done:
@@ -570,78 +554,85 @@ static const char * get_env (const char *name, const char *envp[])
 /**
  * Plugin open (init)
  */
-OPENVPN_EXPORT openvpn_plugin_handle_t
-openvpn_plugin_open_v1 (unsigned int *type_mask, const char *argv[], const char *envp[])
+OPENVPN_EXPORT int
+openvpn_plugin_open_v3(const int version,
+                       struct openvpn_plugin_args_open_in const *args,
+                       struct openvpn_plugin_args_open_return *rv)
 {
   OpenSSL_add_all_digests();
+
+  /* Init plugin wrapper */
+  struct plugin *plugin = calloc(1, sizeof(struct plugin));
+  plugin->log  = args->callbacks->plugin_log;
 
   /*
    * We are only interested in intercepting the
    * --auth-user-pass-verify callback.
    */
-  *type_mask = OPENVPN_PLUGIN_MASK (OPENVPN_PLUGIN_AUTH_USER_PASS_VERIFY);
+  rv->type_mask = OPENVPN_PLUGIN_MASK (OPENVPN_PLUGIN_AUTH_USER_PASS_VERIFY);
 
 
   /*
    * Set up configuration variables
    *
    */
-  const char * cfg_otp_secrets = get_env("otp_secrets", argv);
+  const char * cfg_otp_secrets = get_env("otp_secrets", args->argv);
   if (cfg_otp_secrets != NULL) {
      otp_secrets = strdup(cfg_otp_secrets);
   }
-  LOG("OTP-AUTH: otp_secrets=%s\n", otp_secrets);
+  LOG("otp_secrets=%s", otp_secrets);
 
-  const char * cfg_hotp_counter_file = get_env("hotp_counters", argv);
+  const char * cfg_hotp_counter_file = get_env("hotp_counters", args->argv);
   if (cfg_hotp_counter_file != NULL) {
      hotp_counters = strdup(cfg_hotp_counter_file);
   }
-  LOG("OTP-AUTH: hotp_counters=%s\n", hotp_counters);
+  LOG("hotp_counters=%s", hotp_counters);
 
-  const char * cfg_otp_slop = get_env("otp_slop", argv);
+  const char * cfg_otp_slop = get_env("otp_slop", args->argv);
   if (cfg_otp_slop != NULL) {
      otp_slop = atoi(cfg_otp_slop);
   }
-  LOG("OTP-AUTH: otp_slop=%i\n", otp_slop);
+  LOG("otp_slop=%i", otp_slop);
 
-  const char * cfg_totp_t0 = get_env("totp_t0", argv);
+  const char * cfg_totp_t0 = get_env("totp_t0", args->argv);
   if (cfg_totp_t0 != NULL) {
      totp_t0 = atoi(cfg_totp_t0);
   }
-  LOG("OTP-AUTH: totp_t0=%i\n", totp_t0);
+  LOG("totp_t0=%i", totp_t0);
 
-  const char * cfg_totp_step= get_env("totp_step", argv);
+  const char * cfg_totp_step= get_env("totp_step", args->argv);
   if (cfg_totp_step != NULL) {
      totp_step = atoi(cfg_totp_step);
   }
-  LOG("OTP-AUTH: totp_step=%i\n", totp_step);
+  LOG("totp_step=%i", totp_step);
 
-  const char * cfg_totp_digits = get_env("totp_digits", argv);
+  const char * cfg_totp_digits = get_env("totp_digits", args->argv);
   if (cfg_totp_digits != NULL) {
      totp_digits = atoi(cfg_totp_digits);
   }
-  LOG("OTP-AUTH: totp_digits=%i\n", totp_digits);
+  LOG("totp_digits=%i", totp_digits);
 
-  const char * cfg_motp_step = get_env("motp_step", argv);
+  const char * cfg_motp_step = get_env("motp_step", args->argv);
   if (cfg_motp_step != NULL) {
      motp_step = atoi(cfg_motp_step);
   }
-  LOG("OTP-AUTH: motp_step=%i\n", motp_step);
+  LOG("motp_step=%i", motp_step);
 
-  const char * cfg_hotp_syncwindow = get_env("hotp_syncwindow", argv);
+  const char * cfg_hotp_syncwindow = get_env("hotp_syncwindow", args->argv);
   if (cfg_hotp_syncwindow != NULL) {
      hotp_syncwindow = atoi(cfg_hotp_syncwindow);
   }
-  LOG("OTP-AUTH: hotp_syncwindow=%i\n", hotp_syncwindow);
+  LOG("hotp_syncwindow=%i", hotp_syncwindow);
 
-  const char * cfg_debug = get_env("debug", argv);
+  const char * cfg_debug = get_env("debug", args->argv);
   if (cfg_debug != NULL) {
        debug = atoi(cfg_debug);
   }
-  LOG("OTP-AUTH: debug=%i\n", debug);
-  DEBUG("OTP_AUTH: debug mode has been enabled\n");
+  LOG("debug=%i", debug);
+  DEBUG("debug mode has been enabled");
 
-  return (openvpn_plugin_handle_t) otp_secrets;
+  rv->handle = (void *)plugin;
+  return OPENVPN_PLUGIN_FUNC_SUCCESS;
 }
 
 
@@ -649,18 +640,23 @@ openvpn_plugin_open_v1 (unsigned int *type_mask, const char *argv[], const char 
  * Check credentials
  */
 OPENVPN_EXPORT int
-openvpn_plugin_func_v1 (openvpn_plugin_handle_t handle, const int type, const char *argv[], const char *envp[])
+openvpn_plugin_func_v3(const int version,
+                       struct openvpn_plugin_args_func_in const *args,
+                       struct openvpn_plugin_args_func_return *rv)
 {
   /* get username/password from envp string array */
-  const char *username = get_env ("username", envp);
-  const char *password = get_env ("password", envp);
-  const char *ip = get_env ("untrusted_ip", envp);
-  const char *port = get_env ("untrusted_port", envp);
-  const char *common_name = get_env ("common_name", envp);
+  const char *username = get_env ("username", args->envp);
+  const char *password = get_env ("password", args->envp);
+  const char *ip = get_env ("untrusted_ip", args->envp);
+  const char *port = get_env ("untrusted_port", args->envp);
+  const char *common_name = get_env ("common_name", args->envp);
+
+  /* get plugin wrapper */
+  struct plugin *plugin = (struct plugin  *)args->handle;
 
   /* check if envp strings are set */
   if ((username == NULL) || (password == NULL) || (ip == NULL) || (port == NULL) || (common_name == NULL)) {
-    LOG("OTP-AUTH: Failed to get env strings\n");
+    LOG("Failed to get env strings");
     return OPENVPN_PLUGIN_FUNC_ERROR;
   }
 
@@ -668,24 +664,24 @@ openvpn_plugin_func_v1 (openvpn_plugin_handle_t handle, const int type, const ch
   const int pwlen = strlen(password);
   const int cnlen = strlen(common_name);
   if ( ulen > MAXWORDLEN || ulen == 0 || pwlen > MAXWORDLEN || pwlen == 0 || cnlen > MAXWORDLEN || cnlen == 0) {
-    LOG("OTP-AUTH: String length check failed => username (%d), password(%d), common_name(%d)\n", ulen, pwlen, cnlen);
+    LOG("String length check failed => username (%d), password(%d), common_name(%d)", ulen, pwlen, cnlen);
     return OPENVPN_PLUGIN_FUNC_ERROR;
   }
 
   /* check if entered username and certificate name match */
   if ((ulen != cnlen) || (strncmp (username, common_name, ulen) != 0)) {
-    LOG("OTP-AUTH: common_name (%s) and username (%s) are not identical\n", common_name, username);
+    LOG("common_name (%s) and username (%s) are not identical", common_name, username);
     return OPENVPN_PLUGIN_FUNC_ERROR;
   }
   /* check entered username/password against what we require */
-  int ok = otp_verify(username, password);
+  int ok = otp_verify(username, password, plugin);
 
   if (ok == 1) {
-    LOG("OTP-AUTH: authentication succeeded for username '%s', remote %s:%s\n", username, ip, port);
+    LOG("authentication succeeded for username '%s', remote %s:%s", username, ip, port);
     return OPENVPN_PLUGIN_FUNC_SUCCESS;
   }
   else {
-    LOG("OTP-AUTH: authentication failed for username '%s', remote %s:%s\n", username, ip, port);
+    LOG("authentication failed for username '%s', remote %s:%s", username, ip, port);
     return OPENVPN_PLUGIN_FUNC_ERROR;
   }
 }
@@ -698,4 +694,6 @@ openvpn_plugin_func_v1 (openvpn_plugin_handle_t handle, const int type, const ch
 OPENVPN_EXPORT void
 openvpn_plugin_close_v1 (openvpn_plugin_handle_t handle)
 {
+  struct plugin *plugin = (struct plugin *)handle;
+  free(plugin);
 }
