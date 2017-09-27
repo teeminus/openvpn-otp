@@ -657,6 +657,12 @@ openvpn_plugin_func_v1 (openvpn_plugin_handle_t handle, const int type, const ch
   const char *ip = get_env ("untrusted_ip", envp);
   const char *port = get_env ("untrusted_port", envp);
 
+  /* check if envp strings are set */
+  if ((username == NULL) || (password == NULL) || (ip == NULL) || (port == NULL)) {
+    LOG("OTP-AUTH: Failed to get env strings\n");
+    return OPENVPN_PLUGIN_FUNC_ERROR;
+  }
+
   const int ulen = strlen(username);
   const int pwlen = strlen(password);
   if ( ulen > MAXWORDLEN || ulen == 0 || pwlen > MAXWORDLEN || pwlen == 0) {
