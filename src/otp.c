@@ -656,20 +656,27 @@ openvpn_plugin_func_v1 (openvpn_plugin_handle_t handle, const int type, const ch
   const char *password = get_env ("password", envp);
   const char *ip = get_env ("untrusted_ip", envp);
   const char *port = get_env ("untrusted_port", envp);
+  const char *common_name = get_env ("common_name", envp);
 
   /* check if envp strings are set */
-  if ((username == NULL) || (password == NULL) || (ip == NULL) || (port == NULL)) {
+  if ((username == NULL) || (password == NULL) || (ip == NULL) || (port == NULL) || (common_name == NULL)) {
     LOG("OTP-AUTH: Failed to get env strings\n");
     return OPENVPN_PLUGIN_FUNC_ERROR;
   }
 
   const int ulen = strlen(username);
   const int pwlen = strlen(password);
-  if ( ulen > MAXWORDLEN || ulen == 0 || pwlen > MAXWORDLEN || pwlen == 0) {
-    LOG("OTP-AUTH: String length check failed => username (%d), password(%d)\n", ulen, pwlen);
+  const int cnlen = strlen(common_name);
+  if ( ulen > MAXWORDLEN || ulen == 0 || pwlen > MAXWORDLEN || pwlen == 0 || cnlen > MAXWORDLEN || cnlen == 0) {
+    LOG("OTP-AUTH: String length check failed => username (%d), password(%d), common_name(%d)\n", ulen, pwlen, cnlen);
     return OPENVPN_PLUGIN_FUNC_ERROR;
   }
 
+  /* check if entered username and certificate name match */
+  if ((ulen != cnlen) || (strncmp (username, common_name, ulen) != 0)) {
+    LOG("OTP-AUTH: common_name (%s) and username (%s) are not identical\n", common_name, username);
+    return OPENVPN_PLUGIN_FUNC_ERROR;
+  }
   /* check entered username/password against what we require */
   int ok = otp_verify(username, password);
 
